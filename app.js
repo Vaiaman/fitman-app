@@ -9,7 +9,7 @@ import { exerciseSvg, hasDrawing } from "./exviz.js";
 const KEY = "fitman.v1";
 /** Fit Woman stored its data under this key on the same address; it is read once and left in place as a backup. */
 const LEGACY = "fitwoman.v1";
-const VERSION = "2.1";
+const VERSION = "2.3";
 const A = window.FitmanAndroid || null;
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -230,6 +230,11 @@ function renderTraining() {
           ${p ? `<div class="prev">Vorige keer ${L.fmt(p.kg)} kg × ${p.reps}${p.rir != null ? ` · ${p.rir} RIR` : ""}${s.goal ? ` · doel ${s.goal}` : ""}</div>` : ""}
         </div>`;
       });
+      // A set more or less for today only; the schema stays as it is unless the user makes it stick.
+      const work = sets.filter((s) => !s.drop), extra = dr.extra?.[slot.id] || 0, lastWork = work[work.length - 1];
+      h += `<div class="row setadj"><button class="link" data-a="todaySet" data-id="${slot.id}" data-idx="${idx}" data-by="1" ${work.length >= L.MAX_SETS ? "disabled" : ""}>+ Set erbij</button>
+        ${work.length > 1 && !lastWork?.done ? `<button class="link muted" data-a="todaySet" data-id="${slot.id}" data-idx="${idx}" data-by="-1">− Set eraf</button>` : ""}</div>`;
+      if (extra) h += `<div class="row setadj"><span class="tiny muted grow">Alleen vandaag ${extra > 0 ? "+" : "−"}${Math.abs(extra)} ${Math.abs(extra) === 1 ? "set" : "sets"}. In je schema staan er ${slot.sets}.</span><button class="link" data-a="todayToSchema" data-id="${slot.id}" data-idx="${idx}">Vast in schema</button></div>`;
       // Progressive disclosure: the tip is one tap away instead of pushing the sets down.
       if (e.tip) {
         const tipOpen = ui.tip[slot.id] ?? P().tipsOpen;
@@ -359,7 +364,7 @@ function renderCurrentSchema() {
   const groups = L.supersetLabels(day.exercises);
   const tech = P().techniques;
   let h = `<section class="card row"><div class="grow"><span class="label muted">Huidig schema</span><h3>${esc(p.name)}</h3><p class="small muted">${p.days.length} ${p.days.length === 1 ? "dag" : "dagen"} · ${L.weeklyTarget(data)}× per week</p></div><button class="btn outline sm" data-a="msShare" data-id="">Delen</button></section>
-    <p class="small muted">Tik op een oefening om sets, reps, rust en stapgrootte aan te passen. Alles wordt meteen bewaard.</p>
+    <p class="small muted">Pas het aantal sets aan met − en +. Tik op een oefening voor reps, rust en stapgrootte. Alles wordt meteen bewaard.</p>
     <div class="chips">${p.days.map((d) => `<button class="chip ${d.id === day.id ? "on" : ""}" data-a="sDay" data-id="${d.id}">${esc(d.name)}</button>`).join("")}${p.days.length < 7 ? `<button class="chip add" data-a="addDay">+ Dag</button>` : ""}</div>
     <section class="card"><div class="row"><div class="grow"><h2 style="margin:0">${esc(day.name)}</h2><p class="small muted">${day.exercises.length} oefeningen · ${day.exercises.reduce((a, e) => a + e.sets, 0)} sets · ± ${L.estimatedMinutes(day)} min</p></div>
       <button class="iconbtn" data-a="moveDay" data-by="-1" aria-label="Dag naar voren">${svg("up")}</button><button class="iconbtn" data-a="moveDay" data-by="1" aria-label="Dag naar achteren">${svg("down")}</button></div>
@@ -367,12 +372,15 @@ function renderCurrentSchema() {
   if (!day.exercises.length) h += `<div class="empty">Nog geen oefeningen op ${esc(day.name)}. Voeg hieronder je eerste oefening toe.</div>`;
   day.exercises.forEach((e, i) => {
     const open = ui.schemaEx === e.id;
-    h += `<section class="card"><button class="ex-head" data-a="sEx" data-id="${e.id}" aria-expanded="${open}">
-      <div class="grow">${groups[i] ? `<div class="label" style="color:var(--done)">Superset ${groups[i]}</div>` : ""}<h3>${esc(e.name)}${gPill(e)}</h3>
-      <div class="small muted">${e.sets} × ${e.bodyweight ? "AMRAP" : `${e.repMin}–${e.repMax}`}${P().rir && e.rir != null ? ` · ${e.rir} RIR` : ""}${e.dropSets ? ` · +${e.dropSets} drop` : ""} · rust ${restText(e.rest)}</div></div></button>`;
+    // The sets stepper sits on the card itself: the most-changed setting needs no extra tap (Fogg 2009, ability).
+    h += `<section class="card"><div class="ex-head"><button class="grow" style="text-align:left" data-a="sEx" data-id="${e.id}" aria-expanded="${open}">
+      ${groups[i] ? `<div class="label" style="color:var(--done)">Superset ${groups[i]}</div>` : ""}<h3>${esc(e.name)}${gPill(e)}</h3>
+      <div class="small muted">${e.bodyweight ? "AMRAP" : `${e.repMin}–${e.repMax} reps`}${P().rir && e.rir != null ? ` · ${e.rir} RIR` : ""}${e.dropSets ? ` · +${e.dropSets} drop` : ""} · rust ${restText(e.rest)}</div></button>
+      ${setStepper(e, p.buildUp)}</div>`;
+    if (ui.setsNote === e.id) h += volumeNote(e, week);
     if (open) {
       const x = `data-id="${e.id}"`;
-      h += (p.buildUp ? `<p class="small muted">Sets volgen de opbouw: deze week ${e.sets}.</p>` : field("Sets", e.sets, "exSets", x))
+      h += (p.buildUp ? `<p class="small muted">${buildUpNote(raw.exercises.find((r) => r.id === e.id))}</p>` : "")
         + (e.bodyweight ? "" : field("Reps minimaal", e.repMin, "exMin", x) + field("Reps maximaal", e.repMax, "exMax", x))
         + field("Rust", restText(e.rest), "exRest", x)
         + field("Gewichtsstap", L.fmt(e.inc) + " kg", "exInc", x)
@@ -393,8 +401,32 @@ function renderCurrentSchema() {
   return h;
 }
 
+/** Compact − 3 sets + control; with build-up on it shows this week's sets. */
+function setStepper(e, buildUp) {
+  const x = `data-a="exSets" data-id="${e.id}"`;
+  return `<div class="setstep${buildUp && e.setsAdj ? " adj" : ""}"><button ${x} data-by="-1" ${e.sets <= 1 ? "disabled" : ""} aria-label="Een set minder voor ${esc(e.name)}">−</button>
+    <span aria-live="polite"><b>${e.sets}</b><small>${e.sets === 1 ? "set" : "sets"}</small></span>
+    <button ${x} data-by="1" ${e.sets >= L.MAX_SETS ? "disabled" : ""} aria-label="Een set meer voor ${esc(e.name)}">+</button></div>`;
+}
+function buildUpNote(e) {
+  const adj = e?.setsAdj || 0;
+  return `Opbouw staat aan: het getal hierboven is deze week. ${adj ? `Jij zit ${adj > 0 ? "+" : "−"}${Math.abs(adj)} ${Math.abs(adj) === 1 ? "set" : "sets"} naast de opbouw; de opbouw telt daar bovenop.` : "Pas je de sets aan, dan telt de opbouw bovenop jouw keuze."}`;
+}
+/**
+ * Right after a change: where this muscle lands per week. Informs, never blocks; the user keeps the
+ * choice (autonomy, Deci & Ryan 2000). Ranges from [4, 5]; glute focus may sit higher.
+ */
+function volumeNote(e, week) {
+  const m = L.primaryMuscle(e);
+  if (!m) return "";
+  const v = L.muscleSets(data.program, week)[m] || 0, name = L.MUSCLES[m], hi = gluteFocus() && m === "bilspieren" ? 24 : 20;
+  const t = v > hi ? `${name} komt op ${L.fmt(v)} sets per week. Daarboven groeit een spier gemiddeld nog maar een beetje per extra set en wordt herstel lastiger [4, 5]. Herstel je goed, dan kan het prima.`
+    : v < 10 ? `${name} komt op ${L.fmt(v)} sets per week. Genoeg om te onderhouden; voor zichtbare groei is 10 of meer een goede richtlijn [4, 5].`
+    : `${name} komt op ${L.fmt(v)} sets per week, binnen de werkrange van 10–20 [4, 5].`;
+  return `<p class="volnote ${v > hi || v < 10 ? "warn" : "ok"}">${t}</p>`;
+}
+
 const clampEx = {
-  exSets: (e, by) => ({ ...e, sets: Math.min(8, Math.max(1, e.sets + by)) }),
   exMin: (e, by) => ({ ...e, repMin: Math.min(e.repMax, Math.max(1, e.repMin + by)) }),
   exMax: (e, by) => ({ ...e, repMax: Math.min(50, Math.max(e.repMin, e.repMax + by)) }),
   exRest: (e, by) => ({ ...e, rest: Math.min(300, Math.max(30, e.rest + by * 15)) }),
@@ -598,7 +630,9 @@ const genActions = {
   gUse: () => confirmSheet("Dit schema gebruiken?", "Je huidige schema wordt bewaard in Mijn schema's, zodat je altijd terug kunt. Gelogde trainingen, records en je startdatum blijven staan. Een weekplanning voor deze week vervalt; plan hem opnieuw in Coach.", "Gebruiken", () => {
     const g = genState();
     update((d) => ({ ...useProgram(d, g.result.program), genAnswers: g.a }));
-    ui.gen = null; ui.schemaView = "huidig"; ui.schemaDay = null; render(); toast("Nieuw schema staat klaar");
+    ui.gen = null; ui.schemaView = "huidig"; ui.schemaDay = null;
+    if (P().tour === "nieuw") ui.tab = "training";
+    render(); toast("Nieuw schema staat klaar");
   }),
   gSave: () => {
     const g = genState();
@@ -848,6 +882,7 @@ function renderSettings() {
 
   h += `<span class="label muted grp">Over Fitman</span><section class="card"><button class="row" data-a="toggleSrc" style="width:100%"><span class="grow" style="text-align:left">Bronnen (${SOURCES.length})</span>${svg(ui.srcOpen ? "up" : "down").replace("<svg", '<svg width="22" height="22"')}</button>
     ${ui.srcOpen ? SOURCES.map((x, i) => `<div class="src"><b>[${i + 1}]</b><span>${esc(x)}</span></div>`).join("") : ""}
+    <button class="link" data-a="tourReplay" style="align-self:flex-start">Rondleiding bekijken</button>
     <p class="tiny muted">Versie ${VERSION}${A ? " · Android" : ""}. Alles blijft op je telefoon; Fitman stuurt niets naar een server.</p></section>`;
   return h;
 }
@@ -858,18 +893,21 @@ function legacyText() {
 }
 function renderWelcome() {
   const legacy = legacyText();
-  let h = `<div class="welcome"><div class="brand">FITMAN</div><h1>Welkom</h1><p class="muted">Je trainingslog met een coach erin. Kies waarmee je begint; alles kun je later aanpassen.</p></div>`;
+  let h = `<div class="welcome"><div class="brand">FITMAN</div><h1>Welkom</h1><p class="muted">Je trainingslog met een coach erin. Kies waarmee je begint; alles kun je later aanpassen.</p></div>
+    <ul class="vals" aria-label="Wat Fitman doet"><li><i>1</i>Log je sets in een paar tikken</li><li><i>2</i>Een coach die zegt wanneer je zwaarder kunt</li><li><i>3</i>Je gegevens blijven op je telefoon</li></ul>`;
   if (legacy) h += `<section class="card hl"><h3>Je Fitman-gegevens zijn gevonden</h3><p class="small">Je schema, trainingen, records en metingen uit de vorige versie van de app gaan mee.</p><button class="btn primary block" data-a="legacyImport">Overzetten en verder</button></section>
     <p class="small muted">Of begin opnieuw:</p>`;
   h += `<section class="card"><span>Kleur</span><div class="swatches">${Object.entries(THEMES).map(([k, [label, c]]) => `<button class="swatch-b ${ui.welcomeTheme === k ? "on" : ""}" data-a="welcomeTheme" data-k="${k}" aria-pressed="${ui.welcomeTheme === k}"><i style="background:${c}"></i><span class="tiny">${label}</span></button>`).join("")}</div></section>`;
   h += Object.entries(L.STARTERS).map(([k, v]) => `<button class="card pick" data-a="start" data-k="${k}"><b>${v.label}</b><span class="small muted">${v.text}</span></button>`).join("");
   h += `<button class="card pick" data-a="start" data-k="vragenlijst"><b>Maak een schema op maat</b><span class="small muted">11 korte vragen over je doel, tijd en ervaring. Duurt ongeveer 2 minuten.</span></button>
+    <p class="small muted" style="text-align:center">Na je keuze laten we je in 30 seconden de app zien.</p>
     <button class="link" data-a="import" style="align-self:center">Ik heb een back-up</button>`;
   return h;
 }
 function startWith(k) {
   const program = (L.STARTERS[k] || L.STARTERS.fullbody).make();
-  const profile = { theme: ui.welcomeTheme };
+  // Only a fresh start gets the tour; existing data and restored backups never carry this flag.
+  const profile = { theme: ui.welcomeTheme, tour: "nieuw" };
   if (k === "ppl") Object.assign(profile, { rir: true, techniques: true });
   if (k === "billen") Object.assign(profile, { rir: true, techniques: true, measures: ["hip", "waist"], femaleTopics: true });
   data = normalize({ ...L.emptyData(program), profile });
@@ -931,7 +969,7 @@ function feedbackSheet(context = "") {
 function feedbackReport() {
   const items = data.feedback.filter((f) => !f.sent);
   const list = items.length ? items : data.feedback;
-  const lines = [`Fitman feedback · versie ${VERSION} · ${A ? "Android-app" : navigator.userAgent.match(/iPhone OS [\d_]+/)?.[0]?.replace(/_/g, ".") || "browser"} · thema ${P().theme}`,
+  const lines = [`Fitman feedback · versie ${VERSION} · ${A ? "Android-app" : navigator.userAgent.match(/iPhone OS [\d_]+/)?.[0]?.replace(/_/g, ".") || "browser"} · thema ${P().theme}${P().tour ? ` · rondleiding ${P().tour}` : ""}`,
     `${data.sessions.length} trainingen gelogd sinds ${data.program.startDate}`, ""];
   for (const f of list) lines.push(`• [${[f.date, f.kind, f.context, f.rating && f.rating + "/5"].filter(Boolean).join(" · ")}] ${f.text}`.trim());
   lines.push("", `Schema (${L.weeklyTarget(data)}× per week):`);
@@ -1007,6 +1045,71 @@ function toast(msg) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => (el.hidden = true), 2600);
 }
 
+// ---------- tour: a short first-run walk over the real Training screen ----------
+// Choosing a schema comes first (paradox of the active user, Carroll & Rosson 1987); the tour then points
+// at the real controls instead of showing slides up front (NN/g, Joyce 2020). Four steps fit working
+// memory (Cowan 2001); the first dot is already filled because the schema is chosen (endowed progress,
+// Nunes & Drèze 2006); it ends on an action instead of "klaar" (peak-end, Kahneman et al. 1993).
+const standalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+function tourSteps() {
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const steps = [
+    { at: () => { const rows = [...document.querySelectorAll("main .setrow")]; return rows.length ? [rows[0], rows[rows.length - 1]] : [$("main .card")]; },
+      title: "Log je sets", text: "Vul kg en reps in en tik ✓. De rusttimer start vanzelf. Tik op ⓘ voor uitleg met animatie." },
+    { at: () => [$('nav.tabs [data-id="schema"]')], title: "Jouw schema", text: "Wissel oefeningen, pas sets aan of laat een nieuw schema op maat maken. Oude schema's bewaar je in Mijn schema's." },
+    { at: () => [$('nav.tabs [data-id="progress"]')], title: "Zie je groei", text: "Records en een grafiek per oefening. Onder Lichaam houd je gewicht en omtrek bij." },
+    { at: () => [$('nav.tabs [data-id="coach"]')], ring: () => $('main [data-id="settings"]'), title: "Je coach", text: "Elke week één concreet advies en je weekplanning. Kleur, rusttimer en back-up vind je onder het tandwiel." },
+  ];
+  // In a browser tab Safari may clear site data after 7 days without a visit; a home-screen web app is exempt.
+  if (!A && !standalone()) steps.push({ at: () => [], title: "Zet Fitman op je beginscherm", home: true,
+    text: ios ? "Tik in Safari op het deel-icoon (vierkant met pijl) en kies <b>Zet op beginscherm</b>. Dan opent Fitman als app en blijven je trainingen bewaard."
+      : "Open het browsermenu ⋮ en kies <b>Toevoegen aan startscherm</b>. Dan opent Fitman als app en blijven je trainingen bewaard." });
+  return steps;
+}
+function renderTour() {
+  let el = $("#tour");
+  if (data && ui.tour == null && P().tour === "nieuw" && ui.tab === "training" && !ui.sheet) { ui.tour = 0; window.scrollTo(0, 0); }
+  if (!data || ui.tour == null || ui.tab !== "training") { if (el) el.hidden = true; return; }
+  const steps = tourSteps();
+  const i = Math.min(ui.tour, steps.length - 1);
+  const st = steps[i];
+  const last = i === steps.length - 1;
+  const els = st.at().filter(Boolean);
+  let spot = "";
+  let box = null;
+  if (els.length) {
+    const r = els.map((e) => e.getBoundingClientRect());
+    box = { top: Math.min(...r.map((x) => x.top)) - 6, bottom: Math.max(...r.map((x) => x.bottom)) + 6, left: Math.min(...r.map((x) => x.left)) - 6, right: Math.max(...r.map((x) => x.right)) + 6 };
+    spot = `<div class="tour-spot" style="top:${box.top}px;left:${box.left}px;width:${box.right - box.left}px;height:${box.bottom - box.top}px"></div>`;
+  } else spot = `<div class="tour-dim"></div>`;
+  const ring = st.ring?.();
+  if (ring) { const r = ring.getBoundingClientRect(); spot += `<div class="tour-ring" style="top:${r.top - 4}px;left:${r.left - 4}px;width:${r.width + 8}px;height:${r.height + 8}px"></div>`; }
+  const below = box && (box.top + box.bottom) / 2 < innerHeight / 2;
+  const pos = !box ? "top:28%" : below ? `top:${box.bottom + 14}px` : `bottom:${innerHeight - box.top + 14}px`;
+  // One extra dot up front, already filled: choosing the schema was step one.
+  const dots = Array.from({ length: steps.length + 1 }, (_, k) => `<i class="${k <= i ? "on" : ""}${k === i + 1 ? " now" : ""}"></i>`).join("");
+  const next = st.home ? "Gedaan" : last ? "Start training" : "Volgende";
+  if (!el) { el = document.createElement("div"); el.id = "tour"; el.className = "tour"; document.body.append(el); }
+  el.hidden = false;
+  el.innerHTML = `${spot}<div class="tour-bubble" role="dialog" aria-modal="true" aria-labelledby="tour-t" style="${pos}">
+    <h3 id="tour-t">${st.title}</h3><p class="small">${st.text}</p>
+    <div class="row"><span class="tour-dots grow" aria-label="Stap ${i + 1} van ${steps.length}">${dots}</span>
+      <button class="link muted" data-a="tourSkip">${st.home ? "Later" : "Overslaan"}</button>
+      <button class="btn primary sm" data-a="tourNext" id="tour-next">${next}</button></div></div>`;
+  $("#tour-next").focus({ preventScroll: true });
+}
+function endTour(outcome) {
+  ui.tour = null;
+  update((d) => ({ ...d, profile: { ...d.profile, tour: outcome } }));
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+const tourActions = {
+  tourNext: () => { if (ui.tour >= tourSteps().length - 1) endTour("klaar"); else { ui.tour++; renderTour(); } },
+  tourSkip: () => { const s = tourSteps(); endTour(s[ui.tour]?.home ? "klaar, beginscherm later" : `overgeslagen bij stap ${ui.tour + 1}`); },
+  tourReplay: () => { ui.tab = "training"; ui.tour = 0; ui.openEx = null; render(); window.scrollTo(0, 0); renderTour(); },
+};
+addEventListener("resize", () => renderTour());
+
 // ---------- render ----------
 function applyTheme() {
   const t = data?.profile.theme || ui.welcomeTheme;
@@ -1047,6 +1150,7 @@ function render() {
   if (!tabChanged) window.scrollTo(0, y); else window.scrollTo(0, 0);
   renderTimer();
   if (ui.sheet) renderSheet();
+  renderTour();
 }
 
 // ---------- events ----------
@@ -1091,7 +1195,7 @@ const actions = {
     const swaps = { ...dr.swaps };
     if (pick.id === slot.id) delete swaps[slot.id]; else swaps[slot.id] = pick.id;
     ui.openEx = slot.id;
-    update((d) => ({ ...d, draft: { ...dr, swaps, items: { ...dr.items, [slot.id]: L.draftSets(d, pick, slot.sets, slot.dropSets) } } }));
+    update((d) => ({ ...d, draft: { ...dr, swaps, items: { ...dr.items, [slot.id]: L.draftSets(d, pick, L.todaySets(dr, slot), slot.dropSets) } } }));
   },
   kgStep: (t) => {
     const dr = currentDraft(); const day = L.findDayNow(data, dr.dayId);
@@ -1111,7 +1215,7 @@ const actions = {
   },
   restStop: () => { ui.restStart = 0; renderTimer(); },
 
-  sDay: (t) => { ui.schemaDay = t.dataset.id; ui.schemaEx = null; render(); },
+  sDay: (t) => { ui.schemaDay = t.dataset.id; ui.schemaEx = null; ui.setsNote = null; render(); },
   addDay: () => { const id = "d" + Date.now(); editProgram((p) => L.addDay(p, id)); ui.schemaDay = id; render(); },
   moveDay: (t) => editProgram((p) => L.moveDay(p, ui.schemaDay, +t.dataset.by)),
   copyDay: () => { const id = "d" + Date.now(); editProgram((p) => L.duplicateDay(p, ui.schemaDay, id)); ui.schemaDay = id; render(); },
@@ -1125,7 +1229,7 @@ const actions = {
     const day = data.program.days.find((x) => x.id === ui.schemaDay);
     confirmSheet(`${esc(day.name)} verwijderen?`, "De dag en zijn oefeningen gaan uit je schema. Trainingen die je al gelogd hebt blijven bewaard.", "Verwijderen", () => { editProgram((p) => L.removeDay(p, day.id)); ui.schemaDay = null; render(); });
   },
-  sEx: (t) => { ui.schemaEx = ui.schemaEx === t.dataset.id ? null : t.dataset.id; render(); },
+  sEx: (t) => { ui.schemaEx = ui.schemaEx === t.dataset.id ? null : t.dataset.id; ui.setsNote = null; render(); },
   exSuper: (t) => editProgram((p) => L.updateExercise(p, ui.schemaDay, t.dataset.id, (e) => ({ ...e, supersetWithNext: !e.supersetWithNext }))),
   exMove: (t) => editProgram((p) => L.moveExercise(p, ui.schemaDay, t.dataset.id, +t.dataset.by)),
   exRemove: (t) => { ui.schemaEx = null; editProgram((p) => L.removeExercise(p, ui.schemaDay, t.dataset.id)); },
@@ -1228,10 +1332,30 @@ document.addEventListener("input", (ev) => {
   if (ev.target.dataset.in === "pickQ") { ui.pick.q = ev.target.value; renderSheet(); }
 });
 
-Object.assign(actions, genActions);
+Object.assign(actions, genActions, tourActions);
 
 // Schema stepper buttons share one handler per field.
 for (const k of Object.keys(clampEx)) actions[k] = (t) => editProgram((p) => L.updateExercise(p, ui.schemaDay, t.dataset.id, (e) => clampEx[k](e, +t.dataset.by)));
+actions.todaySet = (t) => {
+  const dr = currentDraft(), slot = L.findDayNow(data, dr.dayId).exercises[+t.dataset.idx];
+  data.draft = L.stepTodaySets(dr, slot, +t.dataset.by);
+  save(); render();
+};
+/** Makes today's set count the schema's: from the next workout on, too. */
+actions.todayToSchema = (t) => {
+  const dr = currentDraft(), slot = L.findDayNow(data, dr.dayId).exercises[+t.dataset.idx];
+  const extra = dr.extra?.[slot.id] || 0, dayId = dr.dayId, week = Math.min(12, L.currentWeek(data));
+  const rest = { ...(dr.extra || {}) }; delete rest[slot.id];
+  data.draft = { ...dr, extra: rest };
+  let p = data.program;
+  for (let i = 0; i < Math.abs(extra); i++) p = L.stepSets(p, dayId, slot.id, Math.sign(extra), week);
+  editProgram(() => p);
+  toast(`${slot.name}: voortaan ${L.findDayNow(data, dayId).exercises[+t.dataset.idx].sets} sets in je schema.`);
+};
+actions.exSets = (t) => {
+  ui.setsNote = t.dataset.id;
+  editProgram((p) => L.stepSets(p, ui.schemaDay, t.dataset.id, +t.dataset.by, Math.min(12, L.currentWeek(data))));
+};
 
 // A new day: today's draft may be stale.
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { if (data) refreshHealth(); render(); } else syncWake(); });
@@ -1240,6 +1364,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) { if
 window.fitmanBack = () => {
   if (ui.sheet) { closeSheet(); return true; }
   if (!data) return false;
+  if (ui.tour != null) { endTour(`overgeslagen bij stap ${ui.tour + 1}`); return true; }
   if (ui.tab === "settings") { ui.tab = ui.prevTab || "training"; render(); return true; }
   if (ui.tab !== "training") { ui.tab = "training"; render(); return true; }
   return false;
